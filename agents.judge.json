@@ -1,0 +1,8 @@
+{
+  "mode": "harden",
+  "proposer":   { "name": "Claude",  "adapter": "openrouter", "model": "anthropic/claude-sonnet-4.6" },
+  "adversaries": [
+    { "name": "Gemini", "adapter": "openrouter", "model": "google/gemini-3.5-flash", "systemFile": "prompts/red-pen.md" }
+  ],
+  "judge": { "name": "Judge", "adapter": "openrouter", "model": "openai/gpt-5.5", "systemFile": "prompts/judge.md" }
+}

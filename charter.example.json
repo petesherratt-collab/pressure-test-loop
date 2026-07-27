@@ -1,0 +1,26 @@
+{
+  "charter_id": "example-2026-07-27",
+  "artifact": "name of the thing under test",
+  "sealed_at": "2026-07-27T00:00:00Z",
+  "note": "Write this before round 1 and never edit it. If you find yourself wanting to revise the charter mid-run, that impulse is itself the finding.",
+  "core_claims": [
+    {
+      "claim_id": "C1",
+      "text": "The single sentence the artifact would be pointless without.",
+      "falsifiable_by": "What observation would show this claim false. If you cannot fill this in, the loop has no fitness signal and will run on rhetoric alone."
+    }
+  ],
+  "supporting_claims": [
+    { "claim_id": "S1", "text": "Claims the artifact could lose and still be worth having." }
+  ],
+  "out_of_scope": [
+    "Stated up front so the proposer cannot invent scope limits mid-run to escape a finding. Anything not listed here is in scope for the whole run."
+  ],
+  "prediction": {
+    "note": "Observer discipline. Fill this in before starting, or the run will confirm whatever you already believed.",
+    "expected_trajectory": "progressing",
+    "expected_rounds_to_stop": 0,
+    "expected_first_casualty": "which core claim you think falls first",
+    "what_would_surprise_me": ""
+  }
+}

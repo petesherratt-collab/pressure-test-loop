@@ -1,4 +1,4 @@
-# redteam-loop
+# pressure-test-loop
 
 A small, dependency-free **multi-agent adversarial loop**. A *proposer* drafts an
 answer; a *red team* of adversary models attacks it; the critiques feed back into
@@ -111,11 +111,13 @@ node orchestrate.mjs --task "..." --config agents.cli.json
 | `--threshold <n>` | confidence mode: stop when every adversary is below this, 1..100 (default 30) |
 | `--probe <kind>` | review mode only: run an attack lens instead of a general review — currently `injection` (costs calls) |
 | `--no-injscan` | silence the default injection-detection scan of the artifact |
+| `--charter <path>` | sealed round-0 claim set; required when a `judge` is configured (see [The judge](#the-judge)) |
 | `--out <path>` | transcript path (default `runs/<timestamp>.md`) |
 | `--quiet` | less console output |
 
 Exit codes: `0` converged, `1` aborted (proposer/panel failure or bad input),
-`2` ran out of rounds without converging — so callers/CI can tell the outcomes apart.
+`2` ran out of rounds without converging, `3` readiness gate returned NOT READY,
+`4` the judge ended the run — so callers/CI can tell the outcomes apart.
 
 ## Configuring agents
 
@@ -239,6 +241,33 @@ attacker and proposer on different vendors. The combined reference docs
 to add a sixth service, split a new pair into two files, point a new
 `agents.<service>.json` at them with `"mode": "vibe-app"`, and no engine change
 is needed.
+
+## The judge
+
+`harden` mode has a failure the severity scale cannot see. Each adversary grades its *single strongest remaining objection*, so if the proposer drops the claim under attack, that objection disappears, the next-strongest is weaker, severity falls and the loop converges. Nothing measures scope. A proposer that quietly deletes every contested claim converges fastest, and the transcript reads like a successful hardening run.
+
+That is the general shape of a closed adversarial loop with no external fitness signal: it optimises for *surviving critique*, and the cheapest way to defeat an objection is to promise less. The judge is the missing scope meter.
+
+Add a `judge` to any harden-mode config and give it a charter:
+
+```
+node orchestrate.mjs --file ./brief.md --config agents.judge.json --charter ./charter.json --rounds 20
+```
+
+The judge runs after the panel each round, in its own context, and rules on the **round** rather than the draft — whether each reply was `addressed`, `dodged`, `rejected_with_reason` or `conceded_by_shrinking`, and whether the run as a whole is `progressing`, `converging`, `stalled`, `retreating` or `collapsed`. It never proposes a fix; a judge that starts improving the draft has joined the loop it exists to observe.
+
+**The charter is the load-bearing piece.** Shrinkage measured round-to-round is invisible — each step looks reasonable. Measured against a sealed round-0 claim set it is arithmetic. See `charter.example.json`; each core claim carries a `falsifiable_by` field, and if you cannot fill it in, the loop has no fitness signal and you are watching rhetoric evolve rather than a draft improve.
+
+Notes on the wiring:
+
+- **Judge-only in harden mode.** In `review` the proposer emits a defect list, and in `vibe-app` the artifact is fixed by design — so a judge there would be scoring prose movement, which is the thing it exists to catch rather than measure.
+- **Third vendor.** Every `--tier` preset carries a third slug for the judge, and the decorrelation warning covers it: a judge sharing the attacker's family systematically agrees the findings mattered; one sharing the proposer's systematically agrees the replies landed.
+- **The delta is computed in code**, not asked of a model (`draftDelta` in `lib/parse.mjs`). The judge is told what changed and rules only on whether it was cosmetic or substantive.
+- **Fail closed toward `stalled`.** An unparseable or un-nonced verdict is recorded as `stalled`, never `progressing`, and can never end a run — same nonce contract as every other verdict line.
+- **The ledger is separate from the transcript.** The transcript is what the models said; the ledger (`runs/<ts>.ledger.json`) is what happened, carried untruncated into every judge call because the longitudinal checks cannot work on a summary.
+- **A judge stop is not convergence.** It exits `4`, and the transcript says so: "the panel ran out of objections" and "the loop stopped producing information" are different outcomes.
+
+A converged run still means what it meant before. A judged run additionally tells you whether the convergence was earned or bought by retreat.
 
 ## How convergence works
 
