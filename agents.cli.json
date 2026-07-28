@@ -1,36 +1,32 @@
 {
-  "_comment": "True multi-model red team using three LOCAL CLIs. Install + auth each first (see README.md): claude; gemini (`npm i -g @google/gemini-cli`, then run `gemini` once to log in OR set GEMINI_API_KEY); codex (`npm i -g @openai/codex`, then `codex login` OR set OPENAI_API_KEY). All three are fed the prompt on stdin (promptVia: stdin) — the most portable form, and required on Windows. `codex exec` needs --skip-git-repo-check to run outside an approved repo. If a tool ever ignores stdin on your platform, switch that agent to `\"promptVia\": \"arg\"` and append the prompt flag (e.g. command [\"gemini\",\"-p\"]).",
+  "_comment": "True multi-model red team — Claude proposes, Gemini and GPT attack, all three through one OPENROUTER_API_KEY (https://openrouter.ai/keys). No local CLI installs or per-vendor logins. Model ids are concrete and current (alias slugs like *-latest are NOT valid on OpenRouter); swap any for an id from https://openrouter.ai/models. Run: node orchestrate.mjs --task \"...\" --config agents.cli.json",
   "proposer": {
     "name": "Claude (proposer)",
-    "adapter": "cli",
-    "command": [
-      "claude",
-      "-p"
-    ],
-    "promptVia": "stdin",
-    "system": "You are a careful, concrete builder. Produce strong, complete work and improve it honestly when given valid criticism."
+    "adapter": "openrouter",
+    "model": "anthropic/claude-opus-4.8",
+    "system": "You are a careful, concrete builder. Produce strong, complete work and improve it honestly when given valid criticism.",
+    "max_tokens": 8000,
+    "timeoutMs": 300000,
+    "retries": 2
   },
   "adversaries": [
     {
       "name": "Gemini (red team)",
-      "adapter": "cli",
-      "command": [
-        "gemini",
-        "--skip-trust"
-      ],
-      "promptVia": "stdin",
-      "system": "You are an adversarial reviewer. Be specific, rigorous, and unsparing."
+      "adapter": "openrouter",
+      "model": "google/gemini-3.5-flash",
+      "system": "You are an adversarial reviewer. Be specific, rigorous, and unsparing.",
+      "max_tokens": 8000,
+      "timeoutMs": 300000,
+      "retries": 2
     },
     {
-      "name": "Codex (red team)",
-      "adapter": "cli",
-      "command": [
-        "codex",
-        "exec",
-        "--skip-git-repo-check"
-      ],
-      "promptVia": "stdin",
-      "system": "You are an adversarial reviewer focused on correctness, edge cases, and security. Cite the exact part you mean."
+      "name": "GPT (red team)",
+      "adapter": "openrouter",
+      "model": "openai/gpt-5.5",
+      "system": "You are an adversarial reviewer focused on correctness, edge cases, and security. Cite the exact part you mean.",
+      "max_tokens": 8000,
+      "timeoutMs": 300000,
+      "retries": 2
     }
   ]
 }

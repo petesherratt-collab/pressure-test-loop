@@ -1,22 +1,24 @@
 {
-  "_comment": "Vibe-app attacker/proposer pair (prompts/vibe-app-attacker.md, prompts/vibe-app-proposer.md). Claude plays both roles locally (zero setup, same install as agents.readiness.json) — swap either to \"openrouter\" + a \"model\" for a different vendor per role, which also avoids the same-family decorrelation warning. Run: `node orchestrate.mjs --mode vibe-app --config agents.vibeapp.json --task \"...\"` (or --file). Converges when the attacker's strongest standing finding is at/below --floor (default LOW).",
+  "_comment": "Vibe-app attacker/proposer pair (prompts/vibe-app-attacker.md, prompts/vibe-app-proposer.md). Both roles are Claude via OpenRouter (one OPENROUTER_API_KEY) — same family, so you will see the decorrelation warning; point either block at a different vendor id, or pass --tier frontier|good|open, for a cross-vendor pair. Run: `node orchestrate.mjs --mode vibe-app --config agents.vibeapp.json --task \"...\"` (or --file). Converges when the attacker's strongest standing finding is at/below --floor (default LOW).",
   "mode": "vibe-app",
   "proposer": {
     "name": "Vibe-app proposer",
-    "adapter": "cli",
-    "command": ["claude", "-p"],
-    "promptVia": "stdin",
+    "adapter": "openrouter",
+    "model": "anthropic/claude-opus-4.8",
     "systemFile": "prompts/vibe-app-proposer.md",
-    "timeoutMs": 300000
+    "max_tokens": 8000,
+    "timeoutMs": 300000,
+    "retries": 2
   },
   "adversaries": [
     {
       "name": "Vibe-app attacker",
-      "adapter": "cli",
-      "command": ["claude", "-p"],
-      "promptVia": "stdin",
+      "adapter": "openrouter",
+      "model": "anthropic/claude-opus-4.8",
       "systemFile": "prompts/vibe-app-attacker.md",
-      "timeoutMs": 300000
+      "max_tokens": 8000,
+      "timeoutMs": 300000,
+      "retries": 2
     }
   ]
 }
