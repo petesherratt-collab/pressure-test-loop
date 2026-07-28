@@ -1,5 +1,5 @@
 {
-  "_comment": "Vibe-app attacker/proposer pair (prompts/vibe-app-attacker.md, prompts/vibe-app-proposer.md). Both roles are Claude via OpenRouter (one OPENROUTER_API_KEY) — same family, so you will see the decorrelation warning; point either block at a different vendor id, or pass --tier frontier|good|open, for a cross-vendor pair. Run: `node orchestrate.mjs --mode vibe-app --config agents.vibeapp.json --task \"...\"` (or --file). Converges when the attacker's strongest standing finding is at/below --floor (default LOW).",
+  "_comment": "Vibe-app attacker/proposer pair (prompts/vibe-app-attacker.md, prompts/vibe-app-proposer.md), both via OpenRouter (one OPENROUTER_API_KEY). Claude proposes, GPT attacks — deliberately different vendors, because this mode has a panel of ONE: there is no second reviewer to catch what a same-family attacker would miss, so the pair itself has to be decorrelated or the run is a model marking its own homework. Run: `node orchestrate.mjs --mode vibe-app --config agents.vibeapp.json --task \"...\"` (or --file). Converges when the attacker's strongest standing finding is at/below --floor (default LOW).",
   "mode": "vibe-app",
   "proposer": {
     "name": "Vibe-app proposer",
@@ -14,7 +14,7 @@
     {
       "name": "Vibe-app attacker",
       "adapter": "openrouter",
-      "model": "anthropic/claude-opus-4.8",
+      "model": "openai/gpt-5.5",
       "systemFile": "prompts/vibe-app-attacker.md",
       "max_tokens": 8000,
       "timeoutMs": 300000,
