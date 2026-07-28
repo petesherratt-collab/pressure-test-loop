@@ -1,22 +1,24 @@
 {
-  "_comment": "Argument/essay attacker/proposer pair (prompts/argument-attacker.md, prompts/argument-proposer.md). Reuses the generic vibe-app pairing mode. Local `claude -p` for both roles by default (zero setup) — pass --tier frontier|good|open to swap both onto cross-vendor OpenRouter models. Run: `node orchestrate.mjs --config agents.argument.json --task \"...\"` (or --file). Converges when the attacker's strongest standing finding is at/below --floor (default LOW).",
+  "_comment": "Argument/essay attacker/proposer pair (prompts/argument-attacker.md, prompts/argument-proposer.md). Reuses the generic vibe-app pairing mode. Both roles are Claude via OpenRouter (one OPENROUTER_API_KEY) — pass --tier frontier|good|open to swap both onto cross-vendor models. Run: `node orchestrate.mjs --config agents.argument.json --task \"...\"` (or --file). Converges when the attacker's strongest standing finding is at/below --floor (default LOW).",
   "mode": "vibe-app",
   "proposer": {
     "name": "Argument proposer",
-    "adapter": "cli",
-    "command": ["claude", "-p"],
-    "promptVia": "stdin",
+    "adapter": "openrouter",
+    "model": "anthropic/claude-opus-4.8",
     "systemFile": "prompts/argument-proposer.md",
-    "timeoutMs": 300000
+    "max_tokens": 8000,
+    "timeoutMs": 300000,
+    "retries": 2
   },
   "adversaries": [
     {
       "name": "Argument attacker",
-      "adapter": "cli",
-      "command": ["claude", "-p"],
-      "promptVia": "stdin",
+      "adapter": "openrouter",
+      "model": "anthropic/claude-opus-4.8",
       "systemFile": "prompts/argument-attacker.md",
-      "timeoutMs": 300000
+      "max_tokens": 8000,
+      "timeoutMs": 300000,
+      "retries": 2
     }
   ]
 }

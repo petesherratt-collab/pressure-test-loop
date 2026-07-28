@@ -19,19 +19,25 @@ The same engine powers the **Pressure Test** service family (vibe-coded apps,
 business ideas, arguments, app UX, pitch decks) — see
 [Pressure Test services](#pressure-test-services-attackerproposer-pairs) below.
 
-## Quick start (no setup)
+## Quick start
 
-Runs entirely on the local [`claude`](https://docs.anthropic.com/en/docs/claude-code) CLI:
+Every shipped config runs through [OpenRouter](https://openrouter.ai) — one key,
+every vendor. Set `OPENROUTER_API_KEY` ([get one](https://openrouter.ai/keys)) and go:
 
 ```bash
+export OPENROUTER_API_KEY=sk-or-...
 node orchestrate.mjs --task "Design a fair rate limiter for a public API"
 # or: npm run redteam -- --task "..."
 ```
 
-## True multi-model red team via OpenRouter
+The default config (`agents.local.json`) is Claude in three framings — same
+family, fine for smoke tests. For a decorrelated panel use
+`--config agents.redpen.json` (Claude vs Gemini vs GPT) or a `--tier` preset.
 
-[OpenRouter](https://openrouter.ai) gives you Claude, Gemini and GPT through one
-key. Set `OPENROUTER_API_KEY`, then either pick a **tier preset**:
+## True multi-model red team
+
+OpenRouter gives you Claude, Gemini and GPT through one key. Either pick a
+**tier preset**:
 
 ```bash
 node orchestrate.mjs --task "..." --config agents.vibeapp.json --tier good
@@ -52,6 +58,51 @@ Everything else in the config (system prompts, timeouts) is untouched; omit
 `openrouter.ai/api/v1/models` on 2026-07-08 — re-verify before editing `TIERS`
 or `PRICING` in `orchestrate.mjs`.
 
+### Choosing models per role
+
+`--defend` sets the model for the defender (the proposer); `--attack` sets it for
+the attacker (every adversary). Neither needs a config edit:
+
+```bash
+node orchestrate.mjs --task "..." \
+  --defend anthropic/claude-opus-4.8 \
+  --attack openai/gpt-5.5
+```
+
+Precedence is **config < `--tier` < `--defend`/`--attack`**, so a tier can be the
+base and one side swapped — cheap defender, expensive attacker, or the reverse:
+
+```bash
+# `good` tier, but let GPT do the attacking
+node orchestrate.mjs --task "..." --tier good --attack openai/gpt-5.5
+```
+
+**`--attack` takes a list**, mapped onto the adversaries in config order, so a
+multi-vendor panel stays multi-vendor:
+
+```bash
+# agents.redpen.json has two adversaries: Gemini, then GPT
+node orchestrate.mjs --config agents.redpen.json --task "..." \
+  --attack openai/gpt-5.5,google/gemini-3.5-flash
+#   adversary 1 (Red Pen · Gemini) → openai/gpt-5.5
+#   adversary 2 (Red Pen · GPT)    → google/gemini-3.5-flash
+```
+
+A single slug still broadcasts to every adversary — convenient on a one-adversary
+config, but on a panel it collapses every reviewer onto one model, which is
+exactly the correlation the loop warns about. The list form is the safe default.
+A list whose length is neither 1 nor the adversary count is an error naming the
+adversaries it found, rather than a silent mis-assignment.
+
+Either flag also re-points that agent at the `openrouter` adapter, so it works on
+top of any config. Choices are limited to the slugs in the `PRICING` table in
+`orchestrate.mjs` — that way a typo or a retired slug fails immediately instead
+of as a 400 mid-run, and every choosable model has a known cost. Pass a bad value
+to print the list with prices; add a `PRICING` row to make a new model choosable.
+
+Picking the same family for both sides is allowed — you'll get the decorrelation
+warning and the run continues.
+
 Or pin models per-agent in a config:
 
 ```bash
@@ -61,23 +112,21 @@ node orchestrate.mjs \
   --rounds 4
 ```
 
-## True multi-model red team with local CLIs (Claude + Gemini + Codex)
+## Driving local CLIs instead (opt-in)
 
-Drive the vendors' own terminal agents — handy on your own machine, where you
-install once and reuse your existing ChatGPT/Google logins instead of per-token
-API keys:
+No shipped config uses it, but the `cli` adapter is still in the engine: it
+spawns a vendor's own terminal agent and reads the reply from stdout, so a run
+goes through your existing Claude/ChatGPT/Google logins rather than per-token
+API billing. To use it, hand-edit an agent block — replace `"model"` with
+`"command"` and set the adapter:
 
-```bash
-# install (Node 18+)
-npm i -g @google/gemini-cli      # provides `gemini`
-npm i -g @openai/codex           # provides `codex`
-
-# auth once
-gemini                           # Google login, or set GEMINI_API_KEY
-codex login                      # ChatGPT account, or set OPENAI_API_KEY
-
-# run the loop across all three
-node orchestrate.mjs --task "..." --config agents.cli.json
+```jsonc
+{
+  "name": "Red Pen · Codex",
+  "adapter": "cli",
+  "command": ["codex", "exec", "--skip-git-repo-check"],
+  "promptVia": "stdin"
+}
 ```
 
 | CLI | install | how it's invoked | auth |
@@ -86,7 +135,10 @@ node orchestrate.mjs --task "..." --config agents.cli.json
 | Gemini | `npm i -g @google/gemini-cli` | `gemini`, prompt on stdin | `gemini` login or `GEMINI_API_KEY` |
 | Codex  | `npm i -g @openai/codex` | `codex exec`, prompt on stdin | `codex login` or `OPENAI_API_KEY` |
 
-> **Prompt delivery.** `agents.cli.json` feeds every tool the prompt on **stdin**
+Caveat: CLI agents don't report token usage, so a run that uses them has no cost
+table. `--tier` also drops `command` and forces every agent back onto OpenRouter.
+
+> **Prompt delivery.** Feed every tool the prompt on **stdin**
 > (`"promptVia": "stdin"`) — the most portable form, and the only safe one on
 > **Windows**, where these CLIs are `.cmd` shims and a multi-line prompt can't be
 > passed as a command argument. If a tool ignores stdin on your platform, switch
@@ -105,6 +157,8 @@ node orchestrate.mjs --task "..." --config agents.cli.json
 | `--config <path>` | agent config (default `agents.local.json`) |
 | `--mode <mode>` | `harden` (default), `review`, `readiness`, or `vibe-app` — see [Modes](#four-modes) |
 | `--tier <name>` | model preset: `fable`, `frontier`, `good`, or `open` (needs `OPENROUTER_API_KEY`) |
+| `--defend <slug>` | model for the defender (proposer) — see [Choosing models per role](#choosing-models-per-role) |
+| `--attack <list>` | model(s) for the attackers — one per adversary, comma-separated, or one for all |
 | `--rounds <n>` | max proposer/critique rounds, 1..50 (default 3) |
 | `--stop <mode>` | convergence test: `severity` (default), `confidence`, or `verdict` (ignored in vibe-app mode) |
 | `--floor <tier>` | severity mode: `critical\|important\|cosmetic` (default `cosmetic`). vibe-app mode: `critical\|high\|medium\|low` (default `low`) |
@@ -122,14 +176,14 @@ Exit codes: `0` converged, `1` aborted (proposer/panel failure or bad input),
 A config has one `proposer` and one or more `adversaries`. Each agent picks an
 **adapter**:
 
+- **`openrouter`** — POST to OpenRouter. Used by every shipped config. Set
+  `"model"` to any ID from <https://openrouter.ai/models> (e.g.
+  `anthropic/claude-sonnet-4.6`, `google/gemini-3.5-flash`, `openai/gpt-5.5`).
+  Reads `OPENROUTER_API_KEY` (override per-agent with `"apiKeyEnv"`).
 - **`cli`** — spawn a local command; reply read from stdout. Set `"command"`
   (e.g. `["claude", "-p"]`, `["gemini"]`, `["codex", "exec"]`) and `"promptVia"`:
   `"stdin"` (default, pipe the prompt in) or `"arg"` (append it as the last
-  argument). See `agents.cli.json`.
-- **`openrouter`** — POST to OpenRouter. Set `"model"` to any ID from
-  <https://openrouter.ai/models> (e.g. `anthropic/claude-sonnet-4.6`,
-  `google/gemini-3.5-flash`, `openai/gpt-5.5`). Reads `OPENROUTER_API_KEY`
-  (override per-agent with `"apiKeyEnv"`).
+  argument). Opt-in only — see [Driving local CLIs](#driving-local-clis-opt-in).
 
 ```jsonc
 {
@@ -231,9 +285,9 @@ node orchestrate.mjs --mode readiness --config agents.readiness.json --file orde
 node orchestrate.mjs --config agents.businessidea.json --tier good --file order.md
 ```
 
-The default configs run both roles on the local `claude` CLI (zero setup, but
-same-family — fine for smoke tests). For real runs use `--tier`, which puts the
-attacker and proposer on different vendors. The combined reference docs
+The service configs run both roles on Claude via OpenRouter (same-family — fine
+for smoke tests). For real runs use `--tier`, which puts the attacker and
+proposer on different vendors. The combined reference docs
 (`prompts/<service>-attacker-proposer.md`) and the shared scaffold
 (`prompts/attacker-proposer-shared-template.md`) document how the pairs are built;
 to add a sixth service, split a new pair into two files, point a new
@@ -325,17 +379,30 @@ finding-severity scale, readiness parsing, the injection cases, and threshold
 behaviour. CI (`.github/workflows/ci.yml`) runs the syntax check, JSON
 validation, and tests on every push.
 
-## Troubleshooting the local CLIs
+## Troubleshooting
 
 A failing adversary doesn't crash the run — it's logged as `ERROR` in that
 round's transcript so the others continue. Common ones:
 
+**OpenRouter (all shipped configs):**
+
+- **`Missing API key: set OPENROUTER_API_KEY`** — export it, or point that agent
+  at a different env var with `"apiKeyEnv"`.
+- **`OpenRouter 400: ... is not a valid model ID`** — the slug is stale or an
+  alias. Alias forms like `*-latest` and `*-pro-latest` are **not** valid here;
+  copy the literal id from the model's page at <https://openrouter.ai/models>.
+- **`OpenRouter 402`** — out of credit on the key.
+- **`$? (no price for slug)` in the cost table** — the model isn't in `PRICING`
+  in `orchestrate.mjs`. Tokens are still counted; add a row, or set `"priceIn"` /
+  `"priceOut"` on the agent.
+
+**Local CLIs (only if you opted into the `cli` adapter):**
+
 - **Gemini: `Please set an Auth method` (exit 41)** — not signed in. Run `gemini`
   once and complete the Google login, or set `GEMINI_API_KEY` in your environment.
 - **Codex: `Not inside a trusted directory and --skip-git-repo-check was not
-  specified`** — `agents.cli.json` already passes `--skip-git-repo-check`; if you
-  changed the command, add that flag back. Also run `codex login` (or set
-  `OPENAI_API_KEY`) first.
+  specified`** — add `--skip-git-repo-check` to the command. Also run
+  `codex login` (or set `OPENAI_API_KEY`) first.
 - **Codex: `Reading prompt from stdin...` then nothing** — it *is* reading stdin;
   any error after that line is auth or the trust check above.
 

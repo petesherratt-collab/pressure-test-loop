@@ -13,8 +13,11 @@
 // returns a PASS verdict (convergence). A full transcript is written to disk.
 //
 // Each agent is reached through a pluggable *adapter* (see ADAPTERS below):
-//   - "cli"        spawn a local command (e.g. the `claude` CLI), prompt on stdin
-//   - "openrouter" POST to OpenRouter chat/completions (Claude, Gemini, GPT, …)
+//   - "openrouter" POST to OpenRouter chat/completions (Claude, Gemini, GPT, …).
+//                  Every shipped agents.*.json uses this; needs OPENROUTER_API_KEY.
+//   - "cli"        spawn a local command (e.g. the `claude` CLI), prompt on stdin.
+//                  Opt-in — no shipped config uses it, and it reports no token
+//                  usage, so runs that use it have no cost table.
 //
 // Usage:
 //   node orchestrate.mjs --task "Design a rate limiter" [options]
@@ -23,7 +26,8 @@
 // Options:
 //   --task   <text>   The task / artifact to work on (or use --file)
 //   --file   <path>   Read the task from a file
-//   --config <path>   Agent config JSON (default: agents.local.json)
+//   --config <path>   Agent config JSON (default: agents.local.json — Claude in
+//                     three framings, via OpenRouter)
 //   --mode <mode>     "harden" (default) — build & defend an answer; "review" —
 //                     produce a sharpened, triaged DEFECT LIST for a file (no rewrite),
 //                     to hand to a coding agent; "readiness" — a single-shot intake
@@ -35,13 +39,21 @@
 //                     concedes each one (see agents.vibeapp.json). (Can also be set
 //                     as `mode` in the config.)
 //   --tier <name>     Model quality preset: "fable", "frontier", "good", or "open".
-//                     "fable" runs Claude Fable 5 as the proposer via OpenRouter —
-//                     useful when Fable isn't reachable through subscription CLI
-//                     access. Overrides
+//                     "fable" runs Claude Fable 5 as the proposer. Overrides
 //                     every agent in the config to the openrouter adapter with a
 //                     cross-vendor model pair (proposer and attackers from different
 //                     labs, so the decorrelation property is preserved). Needs
 //                     OPENROUTER_API_KEY. Omit to use the config's own agents as-is.
+//   --defend <slug>   Model for the defender (the proposer).
+//   --attack <list>   Model(s) for the attackers, comma-separated: one per adversary
+//                     in config order, or a single slug to use for all of them.
+//                     Both flags override the config AND --tier, so a tier can be
+//                     the base with one side swapped. Slugs must come from the
+//                     PRICING table in this file — run with a bad value to print
+//                     the choosable list with prices. Picking the same family for
+//                     both sides warns but runs.
+//                       --attack openai/gpt-5.5,google/gemini-3.5-flash
+//                         → adversary 1 runs GPT, adversary 2 runs Gemini
 //   --rounds <n>      Max proposer/critique rounds, 1..50 (default: 3)
 //   --stop <mode>     Convergence test: "severity" (default), "confidence", or "verdict"
 //                     (ignored in vibe-app mode, which always uses its own finding-
@@ -199,9 +211,10 @@ if (tier !== null && !Object.hasOwn(TIERS, tier)) {
   process.exit(1);
 }
 // readiness mode has no adversaries, so a tier there only re-points the proposer.
-// Swap the agent onto openrouter with the tier's model; cli-only fields are dropped
+// Swap the agent onto openrouter with the given model; cli-only fields are dropped
 // so the resulting agent is a clean openrouter agent (systemFile/timeouts survive).
-function applyTier(agent, model) {
+// Used by --tier and by the per-role --defend/--attack chooser below.
+function withModel(agent, model) {
   const { command, promptVia, ...rest } = agent;
   return { ...rest, adapter: "openrouter", model };
 }
@@ -331,6 +344,65 @@ const PRICING = {
   "deepseek/deepseek-v4-pro":    [0.43, 0.87],
   "qwen/qwen3-max":              [0.78, 3.90],
 };
+
+// ── model chooser: --defend / --attack ───────────────────────────────────────
+// Pick the defender (the proposer) and the attackers (the adversaries) by model
+// slug, independently of which config is loaded. Choices are restricted to the
+// PRICING table above, so a typo or a retired slug fails here instead of as a
+// 400 mid-run, and every choosable model has a known cost — add a row above to
+// make a new model choosable. Precedence is config < --tier < --defend/--attack,
+// so a tier can be the base and one side swapped out. Picking the same family
+// for both sides is allowed; the decorrelation warning below still fires.
+//
+// --attack takes a comma-separated LIST, mapped onto the adversaries in config
+// order (`--attack openai/gpt-5.5,google/gemini-3.5-flash` = first adversary
+// runs GPT, second runs Gemini). A single slug broadcasts to every adversary —
+// convenient, but it collapses a multi-vendor panel onto one model, which is
+// the correlation the loop warns about, so prefer the list form on a panel.
+const CHOOSABLE = Object.keys(PRICING);
+function choosableMenu() {
+  return CHOOSABLE.map(m => `  ${m.padEnd(30)} $${PRICING[m][0]}/$${PRICING[m][1]} per 1M tok`).join("\n");
+}
+function assertChoosable(slug, flag) {
+  if (CHOOSABLE.includes(slug)) return slug;
+  console.error(
+    `Error: ${flag} must name one of:\n${choosableMenu()}\n` +
+    `(got ${JSON.stringify(slug)}). To use another model, add it to PRICING in orchestrate.mjs.`);
+  process.exit(1);
+}
+// --defend: exactly one model. There is only ever one proposer, so a list here
+// is a mistake worth naming rather than silently taking the first entry.
+function parseDefendModel(raw) {
+  if (raw === undefined) return null;
+  if (typeof raw !== "string") { // e.g. `--defend` with no value
+    console.error("Error: --defend needs a model slug, e.g. --defend anthropic/claude-opus-4.8.");
+    process.exit(1);
+  }
+  if (raw.includes(",")) {
+    console.error(`Error: --defend takes exactly one model (there is one proposer); got ${JSON.stringify(raw)}.`);
+    process.exit(1);
+  }
+  return assertChoosable(raw.trim(), "--defend");
+}
+// --attack: one slug, or one per adversary. The count is checked against the
+// config later, where the adversary list is known.
+function parseAttackModels(raw) {
+  if (raw === undefined) return null;
+  if (typeof raw !== "string") { // e.g. `--attack` with no value
+    console.error("Error: --attack needs a model slug, e.g. --attack openai/gpt-5.5 " +
+      "(or one per adversary: --attack openai/gpt-5.5,google/gemini-3.5-flash).");
+    process.exit(1);
+  }
+  const slugs = raw.split(",").map(s => s.trim()).filter(Boolean);
+  if (!slugs.length) {
+    console.error(`Error: --attack needs at least one model slug; got ${JSON.stringify(raw)}.`);
+    process.exit(1);
+  }
+  return slugs.map(s => assertChoosable(s, "--attack"));
+}
+const defendModel = parseDefendModel(args.defend);
+const attackModels = parseAttackModels(args.attack);
+
 // Accumulates one row per API call: { agent, model, in, out, usd }.
 const COST_LOG = [];
 function recordCost(agent, usage) {
@@ -698,8 +770,37 @@ function adversaryPrompt(task, draft, mode, prev, loopMode, nonce) {
 }
 
 // ── validate the config against the known adapters ───────────────────────────
-const proposer = tier && config.proposer ? applyTier(config.proposer, TIERS[tier].proposer) : config.proposer;
-const adversaries = (config.adversaries || []).map(a => tier ? applyTier(a, TIERS[tier].attacker) : a);
+// config < --tier < --defend/--attack: the chosen model wins over the tier's,
+// and either one re-points the agent at openrouter. No flag => config as-is.
+const chooseModel = (agent, tierModel, chosenModel) => {
+  const model = chosenModel ?? tierModel;
+  return agent && model ? withModel(agent, model) : agent;
+};
+const proposer = chooseModel(config.proposer, tier ? TIERS[tier].proposer : null, defendModel);
+
+// --attack: one slug broadcasts to the whole panel; a list maps onto the
+// adversaries in config order and must match their count exactly. A mismatch is
+// a silent mis-assignment otherwise — you would think you were running Gemini
+// against a config whose second adversary never got it.
+const configAdversaries = config.adversaries || [];
+if (attackModels && attackModels.length > 1 && attackModels.length !== configAdversaries.length) {
+  const names = configAdversaries.map((a, i) => `  ${i + 1}. ${a?.name ?? "(unnamed)"}`).join("\n");
+  console.error(
+    `Error: --attack got ${attackModels.length} models but this config has ` +
+    `${configAdversaries.length} ${configAdversaries.length === 1 ? "adversary" : "adversaries"}:\n${names}\n` +
+    `Pass one model per adversary, in that order, or a single model to use for all of them.`);
+  process.exit(1);
+}
+if (attackModels && configAdversaries.length === 0) {
+  console.error("Error: --attack has no effect — this config has no `adversaries` " +
+    "(readiness mode is a single-agent gate; use --defend to set its model).");
+  process.exit(1);
+}
+const adversaries = configAdversaries.map((a, i) => chooseModel(
+  a,
+  tier ? TIERS[tier].attacker : null,
+  attackModels ? (attackModels.length === 1 ? attackModels[0] : attackModels[i]) : null,
+));
 if (!proposer) { console.error("Config error: missing `proposer`."); process.exit(1); }
 // readiness mode is a single-agent gate — no red team to cross-check, so
 // `adversaries` is neither required nor used.

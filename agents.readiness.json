@@ -1,9 +1,12 @@
 {
-  "_comment": "Single-agent intake gate — see prompts/readiness-check.md. No `adversaries`: readiness mode is one call, not a loop.",
+  "_comment": "Single-agent intake gate — see prompts/readiness-check.md. No `adversaries`: readiness mode is one call, not a loop. Runs through OPENROUTER_API_KEY.",
   "mode": "readiness",
   "proposer": {
     "name": "Claude (readiness gate)",
-    "adapter": "cli",
-    "command": ["claude", "-p"]
+    "adapter": "openrouter",
+    "model": "anthropic/claude-sonnet-4.6",
+    "max_tokens": 8000,
+    "timeoutMs": 300000,
+    "retries": 2
   }
 }

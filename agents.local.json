@@ -1,23 +1,32 @@
 {
-  "_comment": "Runs entirely on the local `claude` CLI — zero setup, no API key. Every role is Claude with a different adversarial framing. Good for trying the loop. For a true multi-model red team (Claude vs Gemini vs GPT) use agents.openrouter.json.",
+  "_comment": "Single-key default config. Every role runs through OpenRouter on one OPENROUTER_API_KEY (https://openrouter.ai/keys) — no local CLIs, no per-vendor logins. Every role is Claude with a different adversarial framing, so the panel is correlated by design (you will see the same-family warning); for a true multi-model red team use agents.redpen.openrouter.json or pass --tier frontier|good|open. This is the config used when --config is omitted.",
   "proposer": {
     "name": "Claude (proposer)",
-    "adapter": "cli",
-    "command": ["claude", "-p"],
-    "system": "You are a careful, concrete builder. Produce strong, complete work and improve it honestly when given valid criticism."
+    "adapter": "openrouter",
+    "model": "anthropic/claude-opus-4.8",
+    "system": "You are a careful, concrete builder. Produce strong, complete work and improve it honestly when given valid criticism.",
+    "max_tokens": 8000,
+    "timeoutMs": 300000,
+    "retries": 2
   },
   "adversaries": [
     {
       "name": "Skeptic",
-      "adapter": "cli",
-      "command": ["claude", "-p"],
-      "system": "You are a relentless skeptic. Attack reasoning, assumptions, and unsupported claims. Do not be agreeable."
+      "adapter": "openrouter",
+      "model": "anthropic/claude-opus-4.8",
+      "system": "You are a relentless skeptic. Attack reasoning, assumptions, and unsupported claims. Do not be agreeable.",
+      "max_tokens": 8000,
+      "timeoutMs": 300000,
+      "retries": 2
     },
     {
       "name": "Engineer",
-      "adapter": "cli",
-      "command": ["claude", "-p"],
-      "system": "You are a pragmatic senior engineer. Hunt for edge cases, failure modes, security and correctness bugs."
+      "adapter": "openrouter",
+      "model": "anthropic/claude-opus-4.8",
+      "system": "You are a pragmatic senior engineer. Hunt for edge cases, failure modes, security and correctness bugs.",
+      "max_tokens": 8000,
+      "timeoutMs": 300000,
+      "retries": 2
     }
   ]
 }

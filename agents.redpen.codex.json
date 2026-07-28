@@ -1,28 +1,23 @@
 {
-  "_comment": "Red Pen, single reviewer: Claude proposes, Codex attacks. Use this when Gemini's free CLI tier is down (503s) or you just want a fast, reliable run. Tradeoff: one adversary means one model's blind spots — no decorrelation. Run: `node orchestrate.mjs --task \"...\" --config agents.redpen.codex.json --rounds 5`. To add a reliable second reviewer later, copy the Codex block and switch it to OpenRouter (adapter \"openrouter\", a \"model\", OPENROUTER_API_KEY), or restore the Gemini CLI block from agents.redpen.json once its tier recovers.",
+  "_comment": "Red Pen, single reviewer: Claude proposes, GPT attacks — both through OPENROUTER_API_KEY. Use this when you want a fast, cheap run. Tradeoff: one adversary means one model's blind spots — no decorrelation. Run: `node orchestrate.mjs --task \"...\" --config agents.redpen.codex.json --rounds 5`. To add a second reviewer, copy the adversary block and point it at a different vendor (e.g. google/gemini-3.5-flash), or use agents.redpen.json.",
   "proposer": {
     "name": "Claude (proposer)",
-    "adapter": "cli",
-    "command": [
-      "claude",
-      "-p"
-    ],
-    "promptVia": "stdin",
+    "adapter": "openrouter",
+    "model": "anthropic/claude-opus-4.8",
     "system": "You are a careful, concrete builder. Produce strong, complete work and improve it honestly when the Red Pen lands a real attack — but do not over-correct for objections in the noise band.",
-    "timeoutMs": 300000
+    "max_tokens": 8000,
+    "timeoutMs": 300000,
+    "retries": 2
   },
   "adversaries": [
     {
-      "name": "Red Pen · Codex",
-      "adapter": "cli",
-      "command": [
-        "codex",
-        "exec",
-        "--skip-git-repo-check"
-      ],
-      "promptVia": "stdin",
+      "name": "Red Pen · GPT",
+      "adapter": "openrouter",
+      "model": "openai/gpt-5.5",
       "systemFile": "prompts/red-pen.md",
-      "timeoutMs": 300000
+      "max_tokens": 8000,
+      "timeoutMs": 300000,
+      "retries": 2
     }
   ]
 }
