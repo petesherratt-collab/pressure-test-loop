@@ -99,6 +99,7 @@ import { fileURLToPath } from "node:url";
 import { fenced as fencedRaw, adversaryHeld, attackerHeld, parseReadiness, SEVERITY, severityRank, SEVERITY_ORDER, FINDING_SEVERITY, findingSeverityRank, FINDING_SEVERITY_ORDER } from "./lib/parse.mjs";
 import { scanInjection, injectionNotice } from "./lib/inject.mjs";
 import { PRICING, CHOOSABLE, choosableMenu } from "./lib/pricing.mjs";
+import { loadDotenv } from "./lib/env.mjs";
 
 // A fresh random token per run, woven into every untrusted-data fence so the
 // content inside can't forge the delimiter to escape the fence (see fenced()).
@@ -106,6 +107,10 @@ const FENCE_NONCE = randomBytes(8).toString("hex");
 const fenced = (label, body) => fencedRaw(label, body, FENCE_NONCE);
 
 const __dir = dirname(fileURLToPath(import.meta.url));
+
+// Make good on what the missing-key error promises: a .env next to this file is
+// actually read. Anything already exported in the shell wins over it.
+loadDotenv(__dir);
 
 // ── tiny arg parser ──────────────────────────────────────────────────────────
 function parseArgs(argv) {
