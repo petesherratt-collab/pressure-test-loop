@@ -541,6 +541,12 @@ const ADAPTERS = {
           messages,
           ...(agent.max_tokens ? { max_tokens: agent.max_tokens } : {}),
           ...(agent.temperature != null ? { temperature: agent.temperature } : {}),
+          // Reasoning models split the completion budget between hidden thinking
+          // and visible content. `reasoning` lets a config bound the thinking
+          // (e.g. {"effort":"low"} or {"max_tokens":4000}) so there is budget left
+          // to actually answer — see the empty-content guard below for why that
+          // matters. Passed through untouched; omitted entirely when unset.
+          ...(agent.reasoning ? { reasoning: agent.reasoning } : {}),
         }),
       });
     } catch (e) {
@@ -551,7 +557,27 @@ const ADAPTERS = {
     if (!r.ok) throw new Error(`OpenRouter ${r.status}: ${(await r.text()).slice(0, 500)}`);
     const j = await r.json();
     recordCost(agent, j.usage);
-    return j.choices?.[0]?.message?.content?.trim() ?? "";
+    const choice = j.choices?.[0];
+    const text = choice?.message?.content?.trim() ?? "";
+    // An empty reply must be an ERROR, never an empty critique. A reasoning model
+    // splits its completion budget between hidden thinking and visible content,
+    // and OpenRouter's max_tokens caps the SUM — so a model that thinks hard about
+    // a large artifact can burn the whole budget and return content: "". Returned
+    // as-is, that renders as an adversary with no verdict, which the loop reads as
+    // "attack stands" — indistinguishable from a real objection. You would be
+    // paying full price for a silent seat while the panel looked intact.
+    // Failing loudly instead lets the retry and the dead-adversary circuit breaker
+    // do their jobs, and names the fix.
+    if (!text) {
+      const rTok = j.usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+      const why = rTok > 0
+        ? `the model spent its entire ${j.usage?.completion_tokens ?? "?"}-token completion budget on reasoning ` +
+          `(${rTok} reasoning tokens) and emitted no content — raise this agent's max_tokens, or bound the ` +
+          `thinking with "reasoning": {"effort":"low"} in the config`
+        : `finish_reason=${choice?.finish_reason ?? "?"}`;
+      throw new Error(`${agent.model} returned an empty reply: ${why}`);
+    }
+    return text;
   },
 };
 
