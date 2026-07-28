@@ -1,5 +1,5 @@
 {
-  "_comment": "Business-idea attacker/proposer pair (prompts/business-idea-attacker.md, prompts/business-idea-proposer.md). Reuses the generic vibe-app pairing mode. Both roles are Claude via OpenRouter (one OPENROUTER_API_KEY) — pass --tier frontier|good|open to swap both onto cross-vendor models. Run: `node orchestrate.mjs --config agents.businessidea.json --task \"...\"` (or --file). Converges when the attacker's strongest standing finding is at/below --floor (default LOW).",
+  "_comment": "Business-idea attacker/proposer pair (prompts/business-idea-attacker.md, prompts/business-idea-proposer.md). Reuses the generic vibe-app pairing mode. Claude proposes, GPT attacks, both via OpenRouter (one OPENROUTER_API_KEY). The pair is deliberately cross-vendor: this mode has a panel of ONE, so there is no second reviewer to catch a same-family attacker's blind spots. GPT takes the attacker seat because this persona checks arithmetic that has to actually hold up — CAC/LTV, margins, TAM math — where a plausible-looking wrong number is the whole failure mode. Pass --tier to override both. Run: `node orchestrate.mjs --config agents.businessidea.json --task \"...\"` (or --file). Converges when the attacker's strongest standing finding is at/below --floor (default LOW).",
   "mode": "vibe-app",
   "proposer": {
     "name": "Business-idea proposer",
@@ -14,7 +14,7 @@
     {
       "name": "Business-idea attacker",
       "adapter": "openrouter",
-      "model": "anthropic/claude-opus-4.8",
+      "model": "openai/gpt-5.5",
       "systemFile": "prompts/business-idea-attacker.md",
       "max_tokens": 8000,
       "timeoutMs": 300000,

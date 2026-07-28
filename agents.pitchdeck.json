@@ -1,5 +1,5 @@
 {
-  "_comment": "Pitch-deck attacker/proposer pair (prompts/pitch-deck-attacker.md, prompts/pitch-deck-proposer.md). Reuses the generic vibe-app pairing mode. Both roles are Claude via OpenRouter (one OPENROUTER_API_KEY) — pass --tier frontier|good|open to swap both onto cross-vendor models. Run: `node orchestrate.mjs --config agents.pitchdeck.json --task \"...\"` (or --file). Converges when the attacker's strongest standing finding is at/below --floor (default LOW).",
+  "_comment": "Pitch-deck attacker/proposer pair (prompts/pitch-deck-attacker.md, prompts/pitch-deck-proposer.md). Reuses the generic vibe-app pairing mode. Claude proposes, Gemini attacks, both via OpenRouter (one OPENROUTER_API_KEY). The pair is deliberately cross-vendor: this mode has a panel of ONE, so there is no second reviewer to catch a same-family attacker's blind spots. Gemini takes the attacker seat because this persona reads a deck as a whole document — narrative coherence across slides, claims that could be read two ways — which is structure-over-a-long-artifact rather than deep inference. Pass --tier to override both. Run: `node orchestrate.mjs --config agents.pitchdeck.json --task \"...\"` (or --file). Converges when the attacker's strongest standing finding is at/below --floor (default LOW).",
   "mode": "vibe-app",
   "proposer": {
     "name": "Pitch-deck proposer",
@@ -14,7 +14,7 @@
     {
       "name": "Pitch-deck attacker",
       "adapter": "openrouter",
-      "model": "anthropic/claude-opus-4.8",
+      "model": "google/gemini-3.5-flash",
       "systemFile": "prompts/pitch-deck-attacker.md",
       "max_tokens": 8000,
       "timeoutMs": 300000,
