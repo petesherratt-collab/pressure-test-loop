@@ -31,8 +31,13 @@ import { dirname, join, resolve, extname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { PRICING, CHOOSABLE } from "./lib/pricing.mjs";
 import { estimateRun, quote } from "./lib/estimate.mjs";
+import { loadDotenv } from "./lib/env.mjs";
 
 const __dir = dirname(fileURLToPath(import.meta.url));
+// Read .env before anything checks for the key, so starting the server with a
+// .env in place behaves the same as exporting it by hand. The child process
+// inherits the loaded value through env: process.env in runStream().
+loadDotenv(__dir);
 const PORT = Number(process.env.PORT) || 3000;
 const HOST = "127.0.0.1";           // see the header — local only, on purpose.
 
