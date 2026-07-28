@@ -1,0 +1,29 @@
+{
+  "_comment": "LOCAL SMOKE-TEST CONFIG — not part of the Pressure Test service family. Drives the local `claude` and `codex` CLIs instead of OpenRouter, so a full multi-round run can be exercised end-to-end (stream, UI, convergence, severity movement) without an API key and without spending anything. The cli adapter reports no token usage, so runs from this config have NO cost table — that is expected here and is exactly why it isn't a shipped config. Run: node orchestrate.mjs --config agents.clitest.json --task \"...\" --rounds 2",
+  "proposer": {
+    "name": "Claude (proposer)",
+    "adapter": "cli",
+    "command": ["claude", "-p"],
+    "promptVia": "stdin",
+    "system": "You are a careful, concrete builder. Produce strong, complete work and improve it honestly when the Red Pen lands a real attack — but do not over-correct for objections in the noise band. Be concise: at most 25 lines.",
+    "timeoutMs": 300000
+  },
+  "adversaries": [
+    {
+      "name": "Red Pen · Claude",
+      "adapter": "cli",
+      "command": ["claude", "-p"],
+      "promptVia": "stdin",
+      "systemFile": "prompts/red-pen.md",
+      "timeoutMs": 300000
+    },
+    {
+      "name": "Red Pen · Codex",
+      "adapter": "cli",
+      "command": ["codex", "exec", "--skip-git-repo-check"],
+      "promptVia": "stdin",
+      "systemFile": "prompts/red-pen.md",
+      "timeoutMs": 300000
+    }
+  ]
+}
