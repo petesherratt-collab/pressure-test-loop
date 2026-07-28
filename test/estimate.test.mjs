@@ -11,14 +11,25 @@ const priceOf = (m) => ({ "cheap/model": [1, 10], "dear/model": [2, 20] })[m];
 const P = { name: "proposer", model: "cheap/model", max_tokens: 1000, systemChars: 0 };
 const A = { name: "adv-1", model: "cheap/model", max_tokens: 1000, systemChars: 0 };
 
-test("ceiling counts every call at its max_tokens cap", () => {
+test("ceiling counts every call at its max_tokens cap, including the re-ask", () => {
   // 1 round, 1 proposer + 1 adversary, empty task and system prompts.
-  //   proposer in  = 0                          out = 1000
-  //   adversary in = proposer cap (1000)        out = 1000
+  //   proposer  in = 0                                    out = 1000
+  //   adv call1 in = proposer cap (1000)                  out = 1000
+  //   adv call2 in = call1 in + adv's own reply (2000)    out = 1000   <- the re-ask
   const e = estimateRun({ taskChars: 0, rounds: 1, mode: "harden", proposer: P, adversaries: [A], priceOf });
-  assert.equal(e.calls, 2);
-  // out: 2000 tok @ $10/1M = $0.02 ; in: 1000 tok @ $1/1M = $0.001
-  assert.equal(e.ceilingUsd.toFixed(6), (0.02 + 0.001).toFixed(6));
+  assert.equal(e.calls, 3);                     // 1 proposer + 2 adversary
+  // out: 3000 tok @ $10/1M = $0.03 ; in: 3000 tok @ $1/1M = $0.003
+  assert.equal(e.ceilingUsd.toFixed(6), (0.03 + 0.003).toFixed(6));
+});
+
+test("every adversary is priced for two calls per round — the re-ask is not exceptional", () => {
+  // callAdversary re-asks once when the nonce-signed verdict line is missing.
+  // The first real run of this estimator saw one adversary re-ask in all three
+  // rounds: 12 calls against a one-call-per-round prediction of 9. A ceiling
+  // that ignores it is not a ceiling.
+  const e = estimateRun({ taskChars: 0, rounds: 3, mode: "harden", proposer: P, adversaries: [A, A], priceOf });
+  assert.equal(e.calls, 3 + 3 * 2 * 2);         // 3 proposer + 2 advs x 3 rounds x 2 calls
+  for (const r of e.rows.filter(r => r.name === "adv-1")) assert.equal(r.calls, 6);
 });
 
 test("the task is charged once per call, not once per run", () => {
@@ -27,8 +38,10 @@ test("the task is charged once per call, not once per run", () => {
   const chars = 4000;                       // = 1000 tokens at CHARS_PER_TOKEN
   const one = estimateRun({ taskChars: 0,     rounds: 1, mode: "harden", proposer: P, adversaries: [A], priceOf });
   const two = estimateRun({ taskChars: chars, rounds: 1, mode: "harden", proposer: P, adversaries: [A], priceOf });
-  // 2 calls × 1000 extra input tokens @ $1/1M = $0.002
-  assert.equal((two.ceilingUsd - one.ceilingUsd).toFixed(6), (0.002).toFixed(6));
+  // Three calls carry the artifact — the proposer, the adversary, and the
+  // adversary's re-ask, which repeats the whole prompt including the artifact.
+  // 3 x 1000 extra input tokens @ $1/1M = $0.003
+  assert.equal((two.ceilingUsd - one.ceilingUsd).toFixed(6), (0.003).toFixed(6));
   assert.equal(chars / CHARS_PER_TOKEN, 1000);
 });
 
@@ -49,7 +62,7 @@ test("rounds are a ceiling — early convergence is never assumed", () => {
   // Quoting against the converged case is how you lose money on a stubborn run.
   const e = estimateRun({ taskChars: 0, rounds: 5, mode: "harden", proposer: P, adversaries: [A], priceOf });
   assert.equal(e.rounds, 5);
-  assert.equal(e.calls, 10);   // 5 proposer + 5 adversary
+  assert.equal(e.calls, 15);   // 5 proposer + 5 x 2 adversary
 });
 
 test("each adversary is priced with its own model", () => {
@@ -61,17 +74,18 @@ test("each adversary is priced with its own model", () => {
   assert.equal(rowD.usd.toFixed(9), (rowA.usd * 2).toFixed(9));
 });
 
-test("readiness mode is a single call, no panel, no rounds", () => {
+test("readiness is one gate call plus its re-ask, no panel, no rounds", () => {
   const e = estimateRun({ taskChars: 0, rounds: 5, mode: "readiness", proposer: P, adversaries: [A], priceOf });
-  assert.equal(e.calls, 1);
+  assert.equal(e.calls, 2);    // the gate re-asks once too, like an adversary
   assert.equal(e.rounds, 1);   // --rounds is irrelevant to a single-shot gate
-  assert.equal(e.ceilingUsd.toFixed(6), (0.01).toFixed(6));  // 1000 out @ $10/1M
+  // out: 2000 @ $10/1M = $0.02 ; in: the re-ask carries the first reply, 1000 @ $1/1M
+  assert.equal(e.ceilingUsd.toFixed(6), (0.02 + 0.001).toFixed(6));
 });
 
 test("vibe-app skips the proposer in round 1", () => {
   // Round 1 the attacker reviews the raw artifact; there is no draft to defend.
   const e = estimateRun({ taskChars: 0, rounds: 1, mode: "vibe-app", proposer: P, adversaries: [A], priceOf });
-  assert.equal(e.calls, 1);
+  assert.equal(e.calls, 2);    // no proposer call; the attacker's call + its re-ask
   assert.equal(e.rows.find(r => r.name === "proposer").calls, 0);
 });
 
@@ -89,15 +103,15 @@ test("an agent with no max_tokens is flagged as an assumed cap", () => {
   const e = estimateRun({ taskChars: 0, rounds: 1, mode: "harden", proposer: P, adversaries: [uncapped], priceOf });
   assert.deepEqual(e.assumedCaps, ["adv-loose"]);
   // Its output is priced at the assumed cap rather than being treated as zero.
-  assert.equal(e.rows.find(r => r.name === "adv-loose").outTok, ASSUMED_MAX_TOKENS);
+  assert.equal(e.rows.find(r => r.name === "adv-loose").outTok, ASSUMED_MAX_TOKENS * 2);
 });
 
 test("system prompts are charged, once per call", () => {
   const withSys = { ...A, systemChars: 4000 };   // 1000 tokens
   const bare = estimateRun({ taskChars: 0, rounds: 2, mode: "harden", proposer: P, adversaries: [A], priceOf });
   const sys  = estimateRun({ taskChars: 0, rounds: 2, mode: "harden", proposer: P, adversaries: [withSys], priceOf });
-  // 2 adversary calls × 1000 tokens @ $1/1M = $0.002
-  assert.equal((sys.ceilingUsd - bare.ceilingUsd).toFixed(6), (0.002).toFixed(6));
+  // 2 rounds x (call + re-ask, which repeats the prompt) = 4 x 1000 tok @ $1/1M
+  assert.equal((sys.ceilingUsd - bare.ceilingUsd).toFixed(6), (0.004).toFixed(6));
 });
 
 test("quote applies the markup and defaults to 10x", () => {
