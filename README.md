@@ -112,6 +112,52 @@ node orchestrate.mjs \
   --rounds 4
 ```
 
+### Picking an adversary: non-reasoning beats reasoning
+
+The single most important property of a model in the **adversary** seat is not how
+clever it is. It is whether it *reasons*.
+
+An adversary's turn only counts if it ends in a nonce-signed verdict line. On
+OpenRouter, `max_tokens` caps hidden reasoning and visible content **together**,
+so a reasoning model working on a large artifact can spend its entire budget
+thinking and return `content: ""`. That is not a slow seat or a bad critique —
+it is a seat that stops gating convergence while still billing you.
+
+Measured on the same 30k-char Python artifact, three rounds, identical proposer
+and identical second adversary — only the first seat changed:
+
+| first seat | cost | calls | retries | outcome |
+|---|---|---|---|---|
+| `qwen/qwen3-coder-plus` | **$1.31** | **9** | **0** | verdict on the first call, every round |
+| `google/gemini-3.5-flash` | $1.62 | 11 | 2 | re-asked twice; capitulated to NONE early in an earlier run |
+| `moonshotai/kimi-k2.7-code` | $1.35 | 12 | 3 | **mute all three rounds** — 8000 tokens of reasoning, no content |
+| `moonshotai/kimi-k2.7-code` + `reasoning: {effort: low}` | $1.42 | 13 | 5 | recovered twice on retry, dropped from the panel in round 3 |
+
+Nine calls is the no-retry minimum for 3 rounds × 2 adversaries. Only the
+non-reasoning seat hit it.
+
+Qwen's critiques were **not** thinner for being cheaper — 2100–2300 characters
+against GPT's 2085–3196 — and it found a defect the others missed (an unbounded
+`find_element(By.XPATH, "//*")` whose memory cost lands *before* the size guard
+that was supposed to bound it).
+
+**Rules of thumb:**
+
+- Prefer a **non-reasoning** model in adversary seats. `lib/pricing.mjs` exports
+  `REASONING_MODELS` with measured evidence for each entry.
+- **Probe before seating an unmeasured model.** One call, ~$0.02: read
+  `usage.completion_tokens_details.reasoning_tokens` and check whether
+  `message.content` is non-empty.
+- If you must seat a reasoning model, **raise that agent's `max_tokens`** (24000
+  worked for Kimi where 8000 did not). `"reasoning": {"effort": "low"}` is *not*
+  a fix — Kimi produced 8857 reasoning tokens under it, more than the whole cap.
+- Watch the clock as well as the bill. A round waits on its **slowest** seat, so
+  one verbose reasoning adversary sets the pace for the entire panel: the 24000-token
+  Kimi run was heading past 45 minutes where the Qwen run finished in a few.
+
+An empty reply is now a hard error naming the cause, so this failure announces
+itself instead of quietly degrading the panel.
+
 ## Driving local CLIs instead (opt-in)
 
 No shipped config uses it, but the `cli` adapter is still in the engine: it
