@@ -1,27 +1,27 @@
 {
-  "_comment": "REVIEW mode — turn a file into a sharpened, triaged DEFECT LIST to hand to a coding agent (e.g. Claude Code), not a rewrite. Claude writes the review; Gemini and GPT cross-check it for missed/mis-graded defects. The output is the brief; you apply it elsewhere with full repo context + tests. All three roles run through OPENROUTER_API_KEY. The `mode: review` key makes this the default — no --mode flag needed. Run: node orchestrate.mjs --config agents.review.json --file path\\to\\file --rounds 4",
+  "_comment": "REVIEW mode - turn a file into a sharpened, triaged DEFECT LIST to hand to a coding agent (e.g. Claude Code), not a rewrite. Claude writes the review; Qwen-coder and GPT cross-check it for missed/mis-graded defects. The first seat is qwen3-coder-plus rather than a general-purpose model: measured head-to-head on a 30k-char Python artifact it produced critiques as substantial as GPT's (2100-2300 chars) for about 1/20th the cost, and - the part that actually decides it - it is NON-REASONING, so it emits its nonce-signed verdict line on the first call every time. Reasoning models in this seat spend their max_tokens budget thinking and return empty content, which the loop can only read as a failed seat; see REASONING_MODELS in lib/pricing.mjs. The output is the brief; you apply it elsewhere with full repo context + tests. All three roles run through OPENROUTER_API_KEY. The `mode: review` key makes this the default - no --mode flag needed. Run: node orchestrate.mjs --config agents.review.json --file path\\to\\file --rounds 4",
   "mode": "review",
   "proposer": {
     "name": "Reviewer (Claude)",
     "adapter": "openrouter",
     "model": "anthropic/claude-opus-4.8",
-    "system": "You are a rigorous, concrete senior reviewer. You name defects precisely — location, the input or condition that triggers them, and the fix direction — and you never rewrite or reproduce the artifact. Order by severity.",
+    "system": "You are a rigorous, concrete senior reviewer. You name defects precisely \u2014 location, the input or condition that triggers them, and the fix direction \u2014 and you never rewrite or reproduce the artifact. Order by severity.",
     "max_tokens": 8000,
     "timeoutMs": 300000,
     "retries": 2
   },
   "adversaries": [
     {
-      "name": "Cross-check · Gemini",
+      "name": "Cross-check \u00b7 Qwen (code)",
       "adapter": "openrouter",
-      "model": "google/gemini-3.5-flash",
+      "model": "qwen/qwen3-coder-plus",
       "systemFile": "prompts/red-pen.md",
       "max_tokens": 8000,
       "timeoutMs": 300000,
       "retries": 2
     },
     {
-      "name": "Cross-check · GPT",
+      "name": "Cross-check \u00b7 GPT",
       "adapter": "openrouter",
       "model": "openai/gpt-5.5",
       "systemFile": "prompts/red-pen.md",
