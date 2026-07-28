@@ -8,6 +8,7 @@
   },
   "scripts": {
     "redteam": "node orchestrate.mjs",
+    "start": "node server.mjs",
     "test": "node --test"
   },
   "engines": {

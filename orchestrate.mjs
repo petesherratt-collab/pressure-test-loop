@@ -54,6 +54,12 @@
 //                     both sides warns but runs.
 //                       --attack openai/gpt-5.5,google/gemini-3.5-flash
 //                         → adversary 1 runs GPT, adversary 2 runs Gemini
+//   --events          Emit the run as NDJSON on stdout — one JSON object per line,
+//                     one line per event (run-start, round-start, draft, critique,
+//                     cost, converged, aborted, done). Implies --quiet, since stdout
+//                     carries the stream instead of the prose log. This is what the
+//                     web UI consumes; see server.mjs. The transcript is still
+//                     written to runs/ exactly as normal.
 //   --rounds <n>      Max proposer/critique rounds, 1..50 (default: 3)
 //   --stop <mode>     Convergence test: "severity" (default), "confidence", or "verdict"
 //                     (ignored in vibe-app mode, which always uses its own finding-
@@ -92,6 +98,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { fenced as fencedRaw, adversaryHeld, attackerHeld, parseReadiness, SEVERITY, severityRank, SEVERITY_ORDER, FINDING_SEVERITY, findingSeverityRank, FINDING_SEVERITY_ORDER } from "./lib/parse.mjs";
 import { scanInjection, injectionNotice } from "./lib/inject.mjs";
+import { PRICING, CHOOSABLE, choosableMenu } from "./lib/pricing.mjs";
 
 // A fresh random token per run, woven into every untrusted-data fence so the
 // content inside can't forge the delimiter to escape the fence (see fenced()).
@@ -162,7 +169,15 @@ if (args.config === true) { // present but valueless, e.g. `--config --quiet`
   console.error("Error: --config needs a path, e.g. --config ./agents.json."); process.exit(1);
 }
 const configPath = resolve(typeof args.config === "string" ? args.config : join(__dir, "agents.local.json"));
-const quiet = !!args.quiet;
+
+// --events turns stdout into a machine-readable NDJSON stream: one JSON object
+// per line, one line per thing that happens. It exists so a UI (see server.mjs)
+// can render a run live without scraping log lines that were written for humans
+// and are free to change wording. It implies --quiet, because stdout can carry
+// the prose log or the event stream but not both — anything human-readable
+// interleaved into stdout would corrupt the stream for the parser on the far end.
+const events = !!args.events;
+const quiet = !!args.quiet || events;
 
 if (!existsSync(configPath)) {
   console.error(`Error: config not found: ${configPath}`);
@@ -325,25 +340,19 @@ function validateAgent(agent, where, knownAdapters) {
 
 const log = (...m) => { if (!quiet) console.log(...m); };
 
-// ── cost tracking ────────────────────────────────────────────────────────────
-// Per-model USD price per 1M tokens [input, output]. Update from openrouter.ai/models.
-// Unknown models => cost shows as null (tokens still counted). Override per-agent
-// in the config with "priceIn"/"priceOut" (USD per 1M tokens) if a slug isn't here.
-// Verify any slug AND price at openrouter.ai/models before adding a row, and
-// re-verify periodically — provider prices change.
-const PRICING = {
-  "anthropic/claude-sonnet-4.5": [3, 15],
-  "anthropic/claude-sonnet-4.6": [3, 15],
-  "anthropic/claude-haiku-4.5":  [1, 5],
-  "anthropic/claude-opus-4.8":   [5, 25],
-  "google/gemini-2.5-flash":     [0.30, 2.50],
-  "google/gemini-2.5-pro":       [1.25, 10],
-  "google/gemini-3.5-flash":     [1.50, 9],
-  "openai/gpt-5.5":              [5, 30],
-  "anthropic/claude-fable-5":    [10, 50],
-  "deepseek/deepseek-v4-pro":    [0.43, 0.87],
-  "qwen/qwen3-max":              [0.78, 3.90],
+// Emit one NDJSON event. No-op unless --events, so every call site below can be
+// unconditional and sit next to the log() line it mirrors. Written directly to
+// the fd rather than via console.log so a single event is one atomic write and
+// can never be split across lines by an interleaving writer.
+const emit = (type, data = {}) => {
+  if (events) process.stdout.write(JSON.stringify({ type, t: Date.now(), ...data }) + "\n");
 };
+
+// ── cost tracking ────────────────────────────────────────────────────────────
+// PRICING lives in lib/pricing.mjs — the CLI, the cost table and the web UI all
+// read the same rows, so a price change lands everywhere at once. Unknown models
+// => cost shows as null (tokens still counted). Override per-agent in the config
+// with "priceIn"/"priceOut" (USD per 1M tokens) if a slug isn't in the table.
 
 // ── model chooser: --defend / --attack ───────────────────────────────────────
 // Pick the defender (the proposer) and the attackers (the adversaries) by model
@@ -359,10 +368,6 @@ const PRICING = {
 // runs GPT, second runs Gemini). A single slug broadcasts to every adversary —
 // convenient, but it collapses a multi-vendor panel onto one model, which is
 // the correlation the loop warns about, so prefer the list form on a panel.
-const CHOOSABLE = Object.keys(PRICING);
-function choosableMenu() {
-  return CHOOSABLE.map(m => `  ${m.padEnd(30)} $${PRICING[m][0]}/$${PRICING[m][1]} per 1M tok`).join("\n");
-}
 function assertChoosable(slug, flag) {
   if (CHOOSABLE.includes(slug)) return slug;
   console.error(
@@ -418,6 +423,10 @@ function recordCost(agent, usage) {
   COST_LOG.push({ agent: agent.name, model: agent.model, in: tin, out: tout, usd });
   const usdStr = usd != null ? `$${usd.toFixed(5)}` : "$? (no price for slug)";
   log(`    💰 ${agent.name}: ${tin} in + ${tout} out = ${usdStr}`);
+  // runningUsd lets a UI show spend climbing during the run rather than only in
+  // the summary at the end — the point at which it's too late to stop.
+  emit("cost", { agent: agent.name, model: agent.model, in: tin, out: tout, usd,
+    runningUsd: COST_LOG.reduce((n, r) => n + (r.usd ?? 0), 0) });
 }
 
 // ── adapters: how we actually call a model ──────────────────────────────────
@@ -829,14 +838,18 @@ for (const a of adversaries) {
   const advFamily = familyKey(a);
   if (advFamily && propFamily && advFamily === propFamily) {
     sameFamilyCount++;
-    log(`⚠ Note: adversary "${a.name}" is the same model family as the proposer (${advFamily}) — ` +
-      `correlated reviewers share blind spots, so a PASS is weak evidence of correctness.`);
+    const m = `Adversary "${a.name}" is the same model family as the proposer (${advFamily}) — ` +
+      `correlated reviewers share blind spots, so a PASS is weak evidence of correctness.`;
+    log(`⚠ Note: ${m}`);
+    emit("warning", { level: "note", kind: "correlated-agent", message: m });
   }
 }
 if (adversaries.length > 0 && sameFamilyCount === adversaries.length && propFamily) {
-  log(`⚠ WARNING: EVERY adversary shares the proposer's family (${propFamily}). This panel has ` +
+  const m = `EVERY adversary shares the proposer's family (${propFamily}). This panel has ` +
     `no independent perspective — convergence tells you the family agrees with itself, not that the ` +
-    `answer is right. Add an adversary from a different vendor/CLI.`);
+    `answer is right. Add an adversary from a different vendor/CLI.`;
+  log(`⚠ WARNING: ${m}`);
+  emit("warning", { level: "warning", kind: "correlated-panel", message: m });
 }
 
 // ── the loop ─────────────────────────────────────────────────────────────────
@@ -865,6 +878,8 @@ if (!args["no-injscan"] && injHits.length) {
   const notice = injectionNotice(injHits);
   log(`\n${notice}\n`);                                        // console (respects --quiet)
   transcript.push(`## ⚠ Injection scan\n\n${notice}\n`);       // permanent record
+  emit("warning", { level: "note", kind: "injection-scan", message: notice,
+    hits: injHits.map(h => ({ id: h.id, what: h.what, line: h.line, sample: h.sample })) });
 }
 // Auto-suggest the offensive probe (never auto-run it — it costs calls) when the
 // artifact under REVIEW looks like an LLM system: it tripped the scanner, or matches
@@ -875,6 +890,15 @@ if (probe === null && mode === "review") {
   if (looksLikeLLM || injHits.length)
     log(`hint: this artifact looks like an LLM system — add --probe injection to red-team its injection surface.`);
 }
+
+// The opening event: everything a UI needs to lay out the run before the first
+// token arrives — who is defending, who is attacking, and on what terms.
+emit("run-start", {
+  mode, maxRounds, stopMode, configPath,
+  proposer: { name: proposer.name, model: proposer.model ?? null, adapter: proposer.adapter },
+  adversaries: adversaries.map(a => ({ name: a.name, model: a.model ?? null, adapter: a.adapter })),
+  taskChars: task.length,
+});
 
 let draft = null;
 let critiques = [];
@@ -903,8 +927,10 @@ const persist = (footer) =>
 
 // Shared by every mode: append a per-agent USD/token breakdown to the transcript
 // (openrouter calls only — cli agents don't report usage, so COST_LOG stays empty).
-function appendCostSummary() {
-  if (!COST_LOG.length) return;
+// Roll COST_LOG up per agent and overall. Shared by the transcript's cost table
+// and the `done` event, so the number on screen and the number in the file are
+// the same number rather than two additions that could drift.
+function costTotals() {
   let totIn = 0, totOut = 0, totUsd = 0, anyUnpriced = false;
   const byAgent = new Map();
   for (const row of COST_LOG) {
@@ -915,6 +941,20 @@ function appendCostSummary() {
     if (row.usd == null) g.unpriced = true;
     byAgent.set(row.agent, g);
   }
+  return { totIn, totOut, totUsd, anyUnpriced, byAgent, calls: COST_LOG.length };
+}
+
+// The same totals in a form that survives JSON — a Map serialises to `{}`, which
+// would silently drop the per-agent breakdown from the event stream.
+function costForEvent() {
+  const { totIn, totOut, totUsd, anyUnpriced, byAgent, calls } = costTotals();
+  return { totIn, totOut, totUsd, anyUnpriced, calls,
+    agents: [...byAgent].map(([name, g]) => ({ name, ...g })) };
+}
+
+function appendCostSummary() {
+  if (!COST_LOG.length) return;
+  const { totIn, totOut, totUsd, anyUnpriced, byAgent } = costTotals();
   const lines = [
     `\n---\n\n## Cost (OpenRouter usage)`,
     ``,
@@ -946,11 +986,15 @@ if (mode === "readiness") {
   const prompt = `${instruction}\n\n${fenced("SUBMITTED ARTIFACT", task)}`;
 
   log(`\n▶ Readiness check — ${proposer.name}`);
+  emit("readiness-start", { agent: proposer.name, model: proposer.model ?? null });
   let text;
   try {
     text = await callAgent(proposer, prompt);
   } catch (e) {
     log(`  ${proposer.name}: ERROR — ${e.message}`);
+    emit("agent-error", { agent: proposer.name, role: "proposer", message: e.message, fatal: true });
+    emit("done", { finalOut: null, transcript: outPath, exitCode: 1, mode: "readiness",
+      aborted: `readiness check failed: ${e.message}`, cost: costForEvent() });
     transcript.push(`\n### Readiness check — ${proposer.name}  ·  ⚠️ ERROR\n\n\`\`\`\n${e.message}\n\`\`\``);
     appendCostSummary();
     persist(`> **Aborted** — readiness check failed: ${e.message}`);
@@ -982,17 +1026,22 @@ if (mode === "readiness") {
   persist();
 
   log(`\n${ready ? "✓ READY" : "✗ NOT READY"}`);
-  console.log("\n" + "═".repeat(60) + "\nREADINESS CHECK\n" + "═".repeat(60) + "\n");
-  console.log(text);
-  log(`\n📄 Transcript: ${outPath}`);
   // Distinct exit codes: 0 = ready, 3 = not ready (a real, expected outcome — not
   // an error), 1 = the gate call itself failed (see the catch block above).
+  emit("done", { finalOut: text, transcript: outPath, exitCode: ready ? 0 : 3,
+    mode: "readiness", ready, cost: costForEvent() });
+  if (!events) {
+    console.log("\n" + "═".repeat(60) + "\nREADINESS CHECK\n" + "═".repeat(60) + "\n");
+    console.log(text);
+  }
+  log(`\n📄 Transcript: ${outPath}`);
   process.exitCode = ready ? 0 : 3;
   process.exit();
 }
 
 for (let round = 1; round <= maxRounds; round++) {
   log(`\n▶ Round ${round}/${maxRounds}`);
+  emit("round-start", { round, of: maxRounds });
   transcript.push(`\n---\n\n## Round ${round}`);
 
   // 1) Proposer drafts / revises. Guarded: a proposer failure (timeout, CLI
@@ -1003,18 +1052,23 @@ for (let round = 1; round <= maxRounds; round++) {
   // `draft` stand in for "the fixed artifact, unrebutted" until round 2.
   if (mode === "vibe-app" && round === 1) {
     draft = task;
+    emit("draft-skipped", { round, agent: proposer.name,
+      why: "vibe-app round 1: the attacker reviews the submitted artifact directly; no rebuttal yet" });
     transcript.push(`\n### Draft — ${proposer.name}\n\n_(round 1: the attacker reviews the submitted artifact directly; no rebuttal yet)_`);
   } else {
     log(`  ${proposer.name} (proposer) drafting…`);
+    emit("proposer-start", { round, agent: proposer.name, model: proposer.model ?? null });
     try {
       draft = await callAgent(proposer, proposerPrompt(task, draft, critiques, mode));
     } catch (e) {
       log(`  ${proposer.name}: ERROR — ${e.message}`);
+      emit("agent-error", { round, agent: proposer.name, role: "proposer", message: e.message, fatal: true });
       transcript.push(`\n### Draft — ${proposer.name}  ·  ⚠️ ERROR\n\n\`\`\`\n${e.message}\n\`\`\``);
       aborted = `proposer failed in round ${round}: ${e.message}`;
       persist(`> **Aborted** — ${aborted}`);
       break;
     }
+    emit("draft", { round, agent: proposer.name, text: draft });
     transcript.push(`\n### Draft — ${proposer.name}\n\n${draft}`);
   }
 
@@ -1023,6 +1077,7 @@ for (let round = 1; round <= maxRounds; round++) {
   //    only accept a verdict carrying it — so an echoed/injected verdict line in the
   //    untrusted artifact can't force convergence (it can't guess the token).
   log(`  Red team attacking…`);
+  emit("adversaries-start", { round, agents: adversaries.map(a => a.name) });
   const vnonces = adversaries.map(() => randomBytes(5).toString("hex"));
   const results = await Promise.allSettled(
     adversaries.map((a, i) => callAdversary(a, adversaryPrompt(task, draft, stopMode, prevReview[i], mode, vnonces[i]), vnonces[i]))
@@ -1046,6 +1101,11 @@ for (let round = 1; round <= maxRounds; round++) {
       const move = (priorDisplay != null && display != null && priorDisplay !== display)
         ? `  (${priorDisplay} → ${display})` : "";
       log(`    ${a.name}: ${label}${move}`);
+      // `from`/`to` carry the round-to-round movement — the load-bearing signal
+      // in a run. A UI that shows only the current severity hides whether the
+      // proposer is actually answering the objection or just restating it.
+      emit("critique", { round, agent: a.name, model: a.model ?? null,
+        held, label, severity: display ?? null, from: priorDisplay, to: display ?? null, text });
       transcript.push(`\n### Critique — ${a.name}  ·  ${held ? "✅ holds" : "🔧 attack stands"} (${label})${move}\n\n${text}`);
     } else {
       deadStreak[i] += 1;
@@ -1059,6 +1119,10 @@ for (let round = 1; round <= maxRounds; round++) {
       critiques.push({ name: a.name, text: "[critique unavailable this round due to an error — do not regress prior defenses in this reviewer's domain]" });
       log(`    ${a.name}: ERROR — ${res.reason.message}`);
       if (dead) log(`      ⚠️ "${a.name}" errored ${deadStreak[i]} rounds running — excluding it from convergence gating; results reflect the remaining panel.`);
+      // `dead` means this adversary no longer gates convergence — a UI must show
+      // that, or a PASS looks like a full-panel result when a reviewer is absent.
+      emit("agent-error", { round, agent: a.name, role: "adversary", message: res.reason.message,
+        fatal: false, consecutive: deadStreak[i], dropped: dead });
       transcript.push(`\n### Critique — ${a.name}  ·  ⚠️ ERROR${dead ? " (excluded from convergence gating)" : ""}\n\n\`\`\`\n${res.reason.message}\n\`\`\``);
     }
   });
@@ -1070,6 +1134,7 @@ for (let round = 1; round <= maxRounds; round++) {
   if (adversaries.length > 0 && deadStreak.every(s => s >= DEAD_AFTER)) {
     aborted = `all adversaries failed (each errored ${DEAD_AFTER}+ rounds running) by round ${round}`;
     log(`\n✗ ${aborted} — aborting; no panel left to converge against.`);
+    emit("aborted", { round, reason: aborted, kind: "empty-panel" });
     persist(`> **Aborted** — ${aborted}`);
     break;
   }
@@ -1092,6 +1157,7 @@ for (let round = 1; round <= maxRounds; round++) {
     const meaning = stopMode === "verdict" && mode !== "vibe-app" ? ""
       : " — ready for real-world experimentation, not a correctness guarantee";
     log(`\n✓ Converged in round ${round} — ${how}${meaning}.`);
+    emit("converged", { round, how, meaning: meaning.trim(), roundsSaved: maxRounds - round });
     transcript.push(`\n> **Converged in round ${round}** — ${how}${meaning}.`);
     break;
   }
@@ -1120,9 +1186,20 @@ appendCostSummary();
 persist();
 
 log(`\n📄 Transcript: ${outPath}`);
-console.log("\n" + "═".repeat(60) + "\nFINAL OUTPUT\n" + "═".repeat(60) + "\n");
-console.log(finalOut);
 // Distinct exit codes so callers/CI can tell the three outcomes apart:
 //   0 = converged, 1 = aborted (proposer failed), 2 = ran out of rounds without converging.
-if (aborted) process.exitCode = 1;
-else if (!convergedRound) process.exitCode = 2;
+const exitCode = aborted ? 1 : !convergedRound ? 2 : 0;
+// The terminal event. Carries the outcome AND the settled cost, so a consumer that
+// saw every "cost" event and one that only waits for "done" agree on the total.
+emit("done", {
+  finalOut, footer, transcript: outPath, exitCode,
+  converged: convergedRound !== null, convergedRound, aborted,
+  cost: costForEvent(),
+});
+// In --events mode stdout is the NDJSON stream, so the human banner would corrupt
+// it; the same text is in the `done` event and in the transcript on disk.
+if (!events) {
+  console.log("\n" + "═".repeat(60) + "\nFINAL OUTPUT\n" + "═".repeat(60) + "\n");
+  console.log(finalOut);
+}
+process.exitCode = exitCode;
