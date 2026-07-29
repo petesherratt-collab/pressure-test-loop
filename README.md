@@ -1,4 +1,4 @@
-# redteam-loop
+# pressure-test-loop
 
 A small, dependency-free **multi-agent adversarial loop**. A *proposer* drafts an
 answer; a *red team* of adversary models attacks it; the critiques feed back into
